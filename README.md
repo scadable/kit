@@ -6,10 +6,8 @@ One error envelope. One request id. One meaning for "ready". One shape for a log
 line. If two services disagree about any of those, the fleet stops being legible
 from the outside, and preventing that is the only reason this package exists.
 
-`CONTRACT.md` states the behaviour in language-independent terms. This package
-is the Python implementation of it. When a service is later rewritten in another
-language for throughput, the contract is what it has to reproduce, and the
-conformance suite is how it proves it did.
+`CONTRACT.md` states that behaviour on one page. This package implements it, and
+`kit.testing` proves a service wired it correctly.
 
 ```
 pip install scadable-kit        # from git, see below
@@ -24,7 +22,7 @@ from kit.health import Registry
 | `kit.health` | The readiness registry: `require()` before wiring, three states, checks run concurrently |
 | `kit.observability` | JSON logs with `trace_id` and `span_id` on every line, OTLP exporter setup |
 | `kit.config` | Env loading, the service prefix, the `PORT` and `OTEL_*` exceptions, fail-fast process settings and fail-soft backing systems |
-| `kit.testing` | Pytest fixtures and the conformance suite, so a service inherits its contract tests |
+| `kit.testing` | The contract tests a service inherits, so the shared behaviour is verified in every repository |
 
 About a thousand lines. The most important piece is also the smallest: roughly
 sixty lines of error envelope is what makes every service fail the same way.
@@ -92,7 +90,7 @@ Pinned by tag, not by branch, so a service upgrades deliberately:
 dependencies = ["scadable-kit"]
 
 [tool.uv.sources]
-scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.2.0" }
+scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.3.0" }
 ```
 
 The repository is public, so this needs no credentials: not in CI, not in a
@@ -108,7 +106,7 @@ A change here reaches every service, so:
 
 1. If it touches anything in `CONTRACT.md`, update the contract in the same pull
    request. The contract is the source of truth, the code follows it.
-2. The conformance suite must still pass.
+2. The contract tests must still pass.
 3. Tag a release. Services pick it up as an ordinary dependency bump.
 4. Never fix a service by patching its vendored copy. There are no vendored
    copies, and that is the point.

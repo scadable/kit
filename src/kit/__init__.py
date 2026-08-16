@@ -1,8 +1,7 @@
 """Cross-cutting behaviour shared by every SCADABLE service.
 
-CONTRACT.md states this behaviour in language-independent terms; this package is
-the Python implementation of it. A service rewritten in another language for
-throughput has to reproduce the contract, and kit.testing is how it proves it.
+CONTRACT.md states that behaviour on one page. This package implements it, and
+kit.testing is how a service proves it wired it correctly.
 
 kit never owns your application. create_app() lives in the service and calls in
 here, so opting out of any piece is simply not calling it. There is no base
@@ -21,4 +20,4 @@ The version below is logged at service boot, which is how a stale copy is found
 across the fleet without opening every repository.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

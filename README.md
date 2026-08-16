@@ -1,52 +1,110 @@
-# scadable-service-kit
+# kit
 
-What must be identical in every SCADABLE Python service, and nothing else.
+What must be identical in every SCADABLE service, and nothing else.
 
-One error envelope. One request id. One meaning for "ready". One way a log line
-looks. If two services disagree about any of those, the fleet stops being
-legible from the outside, and that is the only thing this package exists to
-prevent.
+One error envelope. One request id. One meaning for "ready". One shape for a log
+line. If two services disagree about any of those, the fleet stops being legible
+from the outside, and preventing that is the only reason this package exists.
 
-## What is in here
+`CONTRACT.md` states the behaviour in language-independent terms. This package
+is the Python implementation of it. When a service is later rewritten in another
+language for throughput, the contract is what it has to reproduce, and the
+conformance suite is how it proves it did.
 
-| Package | What it owns |
+```
+pip install scadable-kit        # from git, see below
+from kit.health import Registry
+```
+
+## What is in it
+
+| Package | What it gives you |
 | --- | --- |
-| `config` | Env loading, the service prefix, the `PORT` and `OTEL_*` exceptions, fail-soft backing systems |
-| `health` | The readiness registry: `require()` before wiring, three states |
-| `httpapi` | Request id, pattern logging, the error envelope, the shared `/readyz` handler, CORS, rate limiting |
-| `observability` | JSON logs with `trace_id` and `span_id`, OTLP push |
-| `db` | Async engine construction, the tenant-scoped transaction helper |
-| `cache` | Valkey, optional, cache only |
-| `objects` | Spaces |
-| `clients` | httpx and Connect transports, with timeouts and trace propagation |
-| `testing` | Pytest fixtures, so every service inherits the contract tests |
+| `kit.httpapi` | The error envelope, the request-id middleware, the request log line, CORS, rate limiting, the shared `/readyz` handler |
+| `kit.health` | The readiness registry: `require()` before wiring, three states, checks run concurrently |
+| `kit.observability` | JSON logs with `trace_id` and `span_id` on every line, OTLP exporter setup |
+| `kit.config` | Env loading, the service prefix, the `PORT` and `OTEL_*` exceptions, fail-fast process settings and fail-soft backing systems |
+| `kit.testing` | Pytest fixtures and the conformance suite, so a service inherits its contract tests |
 
-## What is deliberately not in here
+About a thousand lines. The most important piece is also the smallest: roughly
+sixty lines of error envelope is what makes every service fail the same way.
 
-The outbox. It has zero production instances in Python, and a shared abstraction
-built before its second real use case is a guess that everyone then has to work
-around.
+## Overriding it
 
-**Code moves into the kit on its third copy, not its first.** A runtime library
-that becomes a framework is an outage multiplier: every service inherits its
-bugs at the same moment, and none of them can opt out.
+**kit never owns your application.** `create_app()` lives in your service and
+calls into kit. There is no base class to inherit, no plugin registry, no import
+side effects. So the escape hatch for anything you disagree with is simply not
+calling that function and writing your own.
 
-Business models, ORM models, migrations, route trees and service-specific
-settings never belong here.
+That matters because a shared library nobody can opt out of stops being a
+library and becomes a framework, and a framework is an outage multiplier: every
+service inherits its bugs at the same moment.
 
-## Why it is vendored right now
+There are two kinds of thing here and they have different rules.
 
-Publishing a package requires a registry, a release process and a versioning
-policy, and there is not yet a single service to justify any of them. Vendoring
-buys roughly two services before the copies start to hurt.
+**Contract. Not overridable.** The envelope shape, the readiness states, the
+header names, the log field names. Overriding these does not customise your
+service, it desynchronises it from every dashboard, alert and client in the
+fleet. If one of them is genuinely wrong, change `CONTRACT.md` and the fleet
+together.
 
-The honest reading: the second copy is already one too many. When a `/readyz`
-fix has to be pasted between two repositories, extraction is overdue.
+**Policy. Override freely, that is what the parameters are for.** Which
+exception maps to which code. Your rate limits. Sampling. Log level. Which
+dependencies you declare. Whether you install CORS at all.
 
-## Extracting it
+Everything is a function or an object you construct and pass. Nothing is a
+module-level singleton, so nothing has to be monkeypatched to be replaced:
 
-1. `git subtree split --prefix=kit -b kit-extract`
-2. Push that branch to `scadable/service-kit`, tag `v0.1.0`
-3. In each service, change `scadable-service-kit = { workspace = true }` to a
-   version range, and delete `kit/` from the workspace members
-4. Nothing else changes. No imports move.
+```python
+# take the defaults
+install_conventions(app, settings)
+
+# or assemble it yourself, in your own order, minus the bits you do not want
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(RequestLogMiddleware, logger=my_logger)
+install_error_handlers(app, mapper=my_exception_mapper)
+# no rate limiter here: this service sits behind an authenticated gateway
+```
+
+When you do take an override, say why in the service's `CLAUDE.md`. An
+undocumented deviation reads as a mistake to the next person and gets
+"corrected" back.
+
+## What is deliberately not in it
+
+Database helpers, cache clients, object storage, service gateways. They were
+here in the first draft and were removed: no service has used them yet, and a
+shared abstraction designed before its second real consumer is a guess everyone
+then works around. They live in the service template's `infra/` until two
+services agree on what they should look like.
+
+**Code moves in on its third copy, not its first.**
+
+Business models, ORM models, migrations, route trees and service settings never
+belong here at all.
+
+## Installing it
+
+Pinned by tag, not by branch, so a service upgrades deliberately:
+
+```toml
+[project]
+dependencies = ["scadable-kit"]
+
+[tool.uv.sources]
+scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.1.0" }
+```
+
+`kit.__version__` is logged at service boot, which is how you answer "who is
+running a stale kit" across the fleet without opening six repositories.
+
+## Changing it
+
+A change here reaches every service, so:
+
+1. If it touches anything in `CONTRACT.md`, update the contract in the same pull
+   request. The contract is the source of truth, the code follows it.
+2. The conformance suite must still pass.
+3. Tag a release. Services pick it up as an ordinary dependency bump.
+4. Never fix a service by patching its vendored copy. There are no vendored
+   copies, and that is the point.

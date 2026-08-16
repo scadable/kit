@@ -1,0 +1,23 @@
+# This package is vendored today and extracted tomorrow.
+#
+# It is already named what it will be called when it is published, so extraction
+# is `git subtree split` on this directory plus changing one line in the root
+# pyproject (`{ workspace = true }` becomes a version range). The import rewrite
+# is zero, because nothing ever imported it by a temporary name.
+#
+# The version below is logged at service boot. Across a fleet of vendored copies
+# that is the only cheap answer to "who is running a stale kit".
+
+[project]
+name = "scadable-service-kit"
+version = "0.1.0"
+description = "Cross-cutting behaviour shared by every SCADABLE Python service"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scadable_service_kit"]

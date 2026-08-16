@@ -21,4 +21,4 @@ The version below is logged at service boot, which is how a stale copy is found
 across the fleet without opening every repository.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

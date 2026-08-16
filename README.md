@@ -92,8 +92,12 @@ Pinned by tag, not by branch, so a service upgrades deliberately:
 dependencies = ["scadable-kit"]
 
 [tool.uv.sources]
-scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.1.0" }
+scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.1.1" }
 ```
+
+The repository is public, so this needs no credentials: not in CI, not in a
+Docker build, not on a new machine. Public source, proprietary license. Nothing
+here is open source and publication grants no rights; see LICENSE.
 
 `kit.__version__` is logged at service boot, which is how you answer "who is
 running a stale kit" across the fleet without opening six repositories.

@@ -10,9 +10,18 @@
 
 [project]
 name = "scadable-kit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Cross-cutting behaviour shared by every SCADABLE service"
 requires-python = ">=3.12,<3.13"
+license = { file = "LICENSE" }
+authors = [{ name = "SCADABLE Inc." }]
+
+# Public source, proprietary license. The classifier is the machine-readable
+# half of LICENSE: nothing here is open source, and publication grants no rights.
+classifiers = [
+    "License :: Other/Proprietary License",
+    "Private :: Do Not Upload",
+]
 
 # Deliberately thin. Every dependency added here is a dependency every service
 # in the fleet inherits and cannot refuse.

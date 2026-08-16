@@ -1,18 +1,11 @@
 # The contract
 
-This is what every SCADABLE service looks like from the outside, in any
-language. The Python package in this repository is one implementation of it and
-happens to be the first.
+This is what every SCADABLE service looks like from the outside. The kit
+implements it, and a service inherits it by installing the kit.
 
-Why it is written down separately from the code: the plan is to build in Python
-and rewrite individual services in another language when a real bottleneck
-appears, most likely in repository parsing. On the day that happens, the
-rewritten service still has to emit the same error envelope, the same readiness
-document and the same log fields, or every dashboard, alert and client breaks at
-the boundary between the rewritten service and the rest of the fleet. A
-reimplementation needs something to conform to that is not "read the Python and
-guess".
-
+Why it is written down separately from the code: this is the part an operator,
+a dashboard and a client all depend on being identical across services, and code
+alone does not tell you which details are load-bearing and which are incidental.
 Everything on this page is **fixed**. Everything not on this page is a service's
 own business.
 
@@ -45,7 +38,8 @@ its own; it may not redefine these.
 and returns `200` with `{"status":"ok"}`. A platform health check restarts the
 container on failure, so a database blip must not be able to reach this.
 
-`GET /readyz` **always returns HTTP 200.** The verdict is in the body:
+`GET /readyz` returns **200 when every required dependency answered, and 503
+when one did not.** The detail is in the body either way:
 
 ```json
 {
@@ -63,8 +57,13 @@ container on failure, so a database blip must not be able to reach this.
 - Driver errors and connection strings never appear in the body. `/readyz` is
   unauthenticated on public ingress.
 
-The always-200 rule exists because the DigitalOcean App Platform edge replaces
-an upstream 5xx with its own HTML page, which discards the report entirely.
+The status code carries the verdict because a Kubernetes readiness probe reads
+the status code and nothing else. A handler that always answered 200 would
+never be taken out of the Service endpoints, which is the entire purpose of
+this endpoint being separate from liveness.
+
+The body carries the detail because a status code cannot say WHICH dependency
+is down, and that is what an operator needs at 3am.
 
 ## Request identity
 
@@ -115,9 +114,8 @@ failing readiness check rather than a service that cannot boot.
 Listen on `$PORT`, default 8080. Handle `SIGTERM` by draining within the
 configured shutdown timeout. Hold no durable state on the container filesystem.
 
-## Conforming
+## Proving it
 
-A new implementation in another language is correct when it passes the
-conformance suite in `src/kit/testing/`, which drives an implementation over
-HTTP and asserts every statement on this page. Run it against the candidate
-before routing traffic at it.
+`kit.testing.assert_contract` drives a service over HTTP and asserts every
+statement on this page. Call it from a test in your own suite, so the contract
+is verified in each service rather than assumed because the kit is installed.

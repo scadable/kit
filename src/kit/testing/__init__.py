@@ -1,11 +1,15 @@
-"""Pytest fixtures and the conformance suite.
+"""Contract tests a service inherits, and the fixtures they need.
 
-Two jobs. The fixtures let a service inherit its contract tests, so the /readyz
-shape, the error envelope and the request-id header are verified in every
-repository rather than in whichever one remembered.
+A service imports :func:`contract_tests` into its own suite and gets the shared
+behaviour verified in ITS repository: the readiness shape and status codes, the
+error envelope, the request id header. Verified in every service rather than in
+whichever one remembered to write the test.
 
-The conformance suite is the other half, and it matters more later than now: it
-drives an implementation over HTTP and asserts every statement in CONTRACT.md.
-When a service is rewritten in another language for throughput, this is what it
-runs against before anything is routed at it.
+They prove a service wired the kit correctly, which is the thing that actually
+goes wrong: installing the kit and forgetting to call it looks identical to
+having no kit at all until something fails in production.
 """
+
+from kit.testing._contract import assert_contract, contract_tests
+
+__all__ = ["assert_contract", "contract_tests"]

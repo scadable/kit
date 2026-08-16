@@ -2,15 +2,14 @@
 #
 # Distribution is namespaced (scadable-kit) so it cannot collide on an index.
 # The import is bare (`from kit.health import Registry`) because it is read far
-# more often than it is installed, and it matches how the Go fleet imported the
-# same packages.
+# more often than it is installed.
 #
 # kit.__version__ is logged at service boot. Across six services that is how you
 # answer "who is running a stale kit" without opening six repositories.
 
 [project]
 name = "scadable-kit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Cross-cutting behaviour shared by every SCADABLE service"
 requires-python = ">=3.14,<3.15"
 license = { file = "LICENSE" }
@@ -26,10 +25,18 @@ classifiers = [
 # Deliberately thin. Every dependency added here is a dependency every service
 # in the fleet inherits and cannot refuse.
 dependencies = [
-    # "fastapi",
-    # "pydantic-settings",
-    # "opentelemetry-sdk",
-    # "opentelemetry-exporter-otlp",
+    "fastapi>=0.141,<0.142",
+    "pydantic>=2.13,<3",
+    "pydantic-settings>=2.7,<3",
+]
+
+# Telemetry is an optional extra so a service that does not export traces does
+# not carry the SDK. The kit degrades to JSON logs without it.
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-sdk>=1.44,<2",
+    "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
+    "opentelemetry-instrumentation-fastapi>=0.65b0",
 ]
 
 [build-system]
@@ -39,9 +46,31 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/kit"]
 
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
+    "ruff",
+    "pyright",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--import-mode=importlib --strict-markers"
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib --strict-markers --cov --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/kit"]
+branch = true
+
+[tool.coverage.report]
+# 100% is defensible here in a way it is not repo-wide: this package is small,
+# has no framework glue, and is the code every service inherits bugs from.
+fail_under = 100
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]
 
 [tool.ruff]
 line-length = 100
@@ -53,8 +82,18 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "DTZ", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
+# kit.testing IS a test helper: asserting is what it exists to do, and the
+# assertion messages are the contract stated in prose.
+"src/kit/testing/**" = ["S101"]
 
 [tool.pyright]
-include = ["src", "tests"]
+# Strict on the library, which is the code seven services inherit bugs from.
+# Tests are verified by running them, and strict mode there mostly objects to
+# reaching into private state, which is exactly what a test of a private
+# invariant has to do.
+include = ["src"]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
+# OpenTelemetry's instrumentation packages ship no stubs. The import is already
+# guarded by try/except because the extra is optional.
+reportMissingTypeStubs = false

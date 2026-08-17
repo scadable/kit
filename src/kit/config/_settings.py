@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -9,6 +10,8 @@ from urllib.parse import urlsplit
 
 DEFAULT_PORT = 8080
 DEFAULT_LOG_LEVEL = "info"
+LOG_LEVELS = frozenset({"debug", "info", "warn", "warning", "error"})
+MAX_PORT = 65535
 DEFAULT_SHUTDOWN_SECONDS = 10.0
 DEFAULT_MIGRATION_SECONDS = 120.0
 DEFAULT_ENVIRONMENT = "development"
@@ -154,7 +157,7 @@ class Settings:
         return self._read(key, fallback)
 
 
-def _positive_int(read: Lookup, key: str, fallback: int) -> int:
+def _bounded_int(read: Lookup, key: str, fallback: int, maximum: int) -> int:
     raw = read(key)
     if not raw:
         return fallback
@@ -162,8 +165,8 @@ def _positive_int(read: Lookup, key: str, fallback: int) -> int:
         value = int(raw)
     except ValueError:
         raise ConfigError(f"{key} must be a whole number, got {raw!r}") from None
-    if value < 1:
-        raise ConfigError(f"{key} must be at least 1, got {value}")
+    if value < 1 or value > maximum:
+        raise ConfigError(f"{key} must be between 1 and {maximum}, got {value}")
     return value
 
 
@@ -175,8 +178,28 @@ def _seconds(read: Lookup, key: str, fallback: float) -> float:
         value = float(raw)
     except ValueError:
         raise ConfigError(f"{key} must be a number of seconds, got {raw!r}") from None
+    # float() accepts "nan" and "inf". A NaN timeout compares false against every
+    # bound, so it passes a positivity check and then makes every wait either
+    # instant or never, which is the kind of setting that looks configured and
+    # behaves randomly.
+    if not math.isfinite(value):
+        raise ConfigError(f"{key} must be a finite number of seconds, got {raw!r}")
     if value <= 0:
         raise ConfigError(f"{key} must be greater than zero, got {value}")
+    return value
+
+
+def _log_level(read: Lookup) -> str:
+    """Reject a level nobody implements rather than silently meaning info.
+
+    An operator who sets LOG_LEVEL=verbose has said something specific and would
+    otherwise get info while believing they get more.
+    """
+    value = read("LOG_LEVEL", DEFAULT_LOG_LEVEL).lower()
+    if value not in LOG_LEVELS:
+        raise ConfigError(
+            f"LOG_LEVEL must be one of {', '.join(sorted(LOG_LEVELS))}, got {value!r}"
+        )
     return value
 
 
@@ -230,8 +253,8 @@ def load(service: Service, environ: dict[str, str] | None = None) -> Settings:
     read = scoped(service.env_prefix, environ)
 
     process = Process(
-        port=_positive_int(read, "PORT", DEFAULT_PORT),
-        log_level=read("LOG_LEVEL", DEFAULT_LOG_LEVEL).lower(),
+        port=_bounded_int(read, "PORT", DEFAULT_PORT, MAX_PORT),
+        log_level=_log_level(read),
         shutdown_seconds=_seconds(read, "SHUTDOWN_TIMEOUT", DEFAULT_SHUTDOWN_SECONDS),
         migration_seconds=_seconds(read, "MIGRATION_TIMEOUT", DEFAULT_MIGRATION_SECONDS),
         environment=read("DEPLOYMENT_ENVIRONMENT", DEFAULT_ENVIRONMENT),
@@ -249,7 +272,7 @@ def load(service: Service, environ: dict[str, str] | None = None) -> Settings:
         url = read("DATABASE_URL")
         database = Database(
             url=validate_database_url(url) if url else "",
-            pool_max=_positive_int(read, "DB_POOL_MAX", DEFAULT_POOL_MAX),
+            pool_max=_bounded_int(read, "DB_POOL_MAX", DEFAULT_POOL_MAX, 1000),
             pool_lifetime_seconds=_seconds(read, "DB_POOL_LIFETIME", DEFAULT_POOL_LIFETIME_SECONDS),
             health_timeout_seconds=_seconds(
                 read, "DB_HEALTH_TIMEOUT", DEFAULT_HEALTH_TIMEOUT_SECONDS

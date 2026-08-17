@@ -25,7 +25,8 @@ both browser-legal and safe.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 MAX_AGE_SECONDS = 600
 """Long enough to matter for a chatty UI, short enough that changing the
@@ -50,7 +51,7 @@ log line is the failure this header exists to prevent.
 """
 
 
-def normalize_origins(origins: list[str]) -> set[str]:
+def normalize_origins(origins: Sequence[str]) -> set[str]:
     """Trim whitespace, drop one trailing slash, discard empties.
 
     A service reading a comma-separated variable that happens to be empty hands
@@ -68,9 +69,15 @@ def normalize_origins(origins: list[str]) -> set[str]:
 
 @dataclass(frozen=True, slots=True)
 class CORS:
-    """Which cross-origin mode this service runs, if any."""
+    """Which cross-origin mode this service runs, if any.
 
-    allowed_origins: list[str] = field(default_factory=list[str])
+    ``allowed_origins`` is a tuple rather than a list because this type is frozen
+    and a frozen dataclass holding a mutable field is not frozen: appending to a
+    list after construction walks straight past the mutual-exclusion check in
+    ``__post_init__`` and produces the contradiction it exists to refuse.
+    """
+
+    allowed_origins: tuple[str, ...] = ()
     public_read: bool = False
 
     def __post_init__(self) -> None:

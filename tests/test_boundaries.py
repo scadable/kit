@@ -93,4 +93,4 @@ def test_a_record_with_no_exception_carries_no_error_fields() -> None:
 def test_a_pool_size_below_one_is_refused(value: str) -> None:
     settings = load(SERVICE, {"KIT_DB_POOL_MAX": value})
 
-    assert "at least 1" in str(settings.database.error)
+    assert "between 1 and" in str(settings.database.error)

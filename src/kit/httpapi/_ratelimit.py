@@ -51,10 +51,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from itertools import islice
 
 MAX_TRACKED_BUCKETS = 100_000
 """A bucket is a short key and two numbers, so this is a few megabytes.
@@ -100,6 +100,9 @@ class RateLimit:
     What it must NEVER be is a function of whether a credential arrived. That was
     the defect: sending a meaningless header bought twenty times the allowance.
     """
+    trusted_proxies: int = 0
+    """How many proxies sit in front of this process, for reading forwarded
+    addresses. Zero means the header is ignored entirely."""
     off: bool = False
 
     def resolved(self) -> RateLimit:
@@ -157,20 +160,37 @@ def fingerprint(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:32]
 
 
-def client_address(headers: dict[str, str], peer: str) -> str:
-    """The address the proxy observed, taken from the RIGHTMOST forwarded entry.
+def client_address(headers: dict[str, str], peer: str, trusted_proxies: int = 0) -> str:
+    """The caller's address, honouring only as many proxies as are actually there.
 
-    A proxy APPENDS the address it saw to any inbound ``X-Forwarded-For``, so the
-    leftmost entry is whatever the client typed. Reading it would let anybody
-    mint unlimited identities by varying one header, which defeats the limiter
-    completely and silently. The rightmost is the one the proxy wrote.
+    ``X-Forwarded-For`` is a header the caller can write. A proxy APPENDS what it
+    saw, so the entries a caller controls are on the LEFT and the entries written
+    by infrastructure are on the RIGHT. Counting from the right is therefore the
+    only safe direction, and how far you may count is exactly the number of
+    proxies in front of this process.
+
+    ``trusted_proxies=0`` is the default and ignores the header entirely, because
+    a process reached directly has no proxy to have written it and anything
+    present was typed by the caller. Set it to the real number: one behind a
+    single ingress. Getting it too high lets a caller mint addresses; too low
+    collapses every customer behind the proxy into one bucket, which turns a
+    shared limit into an outage for everybody.
     """
+    if trusted_proxies < 1:
+        return peer
+
     forwarded = headers.get("x-forwarded-for", "")
-    if forwarded:
-        nearest = forwarded.split(",")[-1].strip()
-        if nearest:
-            return nearest
-    return peer
+    if not forwarded:
+        return peer
+
+    hops = [hop.strip() for hop in forwarded.split(",") if hop.strip()]
+    if not hops:
+        return peer
+
+    # Skip the proxies we know about; whatever is immediately left of them is the
+    # furthest entry that is still infrastructure-written.
+    index = max(0, len(hops) - trusted_proxies)
+    return hops[index]
 
 
 @dataclass(slots=True)
@@ -231,14 +251,24 @@ class Limiter:
         now = self.now()
         self._sweep(now)
 
-        buckets: list[_Bucket] = []
-        for index, (key, limit) in enumerate(owed):
-            bucket = self._refilled(key, limit, now)
-            if bucket.tokens < 1:
-                by_address = index > 0 or (len(owed) == 1 and key.startswith("a:"))
-                return False, _retry_after(limit, bucket.tokens), by_address
-            buckets.append(bucket)
+        # Refuse BEFORE allocating anything.
+        #
+        # A bucket created for a request that is then refused is a bucket an
+        # attacker gets for free. Rotating garbage credentials would fill the
+        # table with entries that never admitted a single request, which is
+        # precisely the attack the address ceiling exists to stop, funded by the
+        # limiter itself. So every bucket that ALREADY EXISTS is checked first,
+        # and a new one is created only once the request is known to be
+        # admissible.
+        for key, limit in owed:
+            existing = self._buckets.get(key)
+            if existing is None:
+                continue
+            self._refill(existing, limit, now)
+            if existing.tokens < 1:
+                return False, _retry_after(limit, existing.tokens), key.startswith("a:")
 
+        buckets = [self._refilled(key, limit, now) for key, limit in owed]
         for bucket in buckets:
             bucket.tokens -= 1
         return True, 0, False
@@ -252,13 +282,16 @@ class Limiter:
             self._buckets[key] = held
             return held
 
+        self._refill(held, limit, now)
+        return held
+
+    def _refill(self, held: _Bucket, limit: RateLimit, now: float) -> None:
         elapsed = now - held.seen
         if elapsed > 0:
             # Capping is what makes this a bucket rather than a bank: an identity
             # that was quiet for a day may not spend a day's allowance at once.
             held.tokens = min(float(limit.burst), held.tokens + elapsed * limit.per_second)
         held.seen = now
-        return held
 
     def _evict_one(self, now: float) -> None:
         """Make room, never refuse for lack of it.
@@ -274,13 +307,18 @@ class Limiter:
         """
         if not self._buckets:
             return
-        # Sampled at random rather than taking the first few. Python dicts
-        # iterate in insertion order, so a naive scan would always examine the
-        # same oldest-inserted entries and make the victim predictable, which is
-        # to say aimable.
-        keys = list(self._buckets)
-        sample = random.sample(keys, min(EVICTION_SAMPLE, len(keys)))
-        victim = min(sample, key=lambda key: self._buckets[key].seen)
+        # A bounded sample from the FRONT of the table, which is O(sample) rather
+        # than O(table). Building a list of every key first would make each
+        # admission at capacity a hundred-thousand-element scan and allocation,
+        # turning the overload path into its own denial of service under exactly
+        # the flood it exists to survive.
+        #
+        # The front is where the oldest insertions are, because Python dicts keep
+        # insertion order. That is the right end to evict from and it cannot be
+        # aimed: an attacker's own buckets are the newest, so they sit at the
+        # back and are evicted last.
+        sample = list(islice(self._buckets.items(), EVICTION_SAMPLE))
+        victim = min(sample, key=lambda item: item[1].seen)[0]
         del self._buckets[victim]
         self._report(now)
 

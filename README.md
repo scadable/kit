@@ -90,7 +90,7 @@ Pinned by tag, not by branch, so a service upgrades deliberately:
 dependencies = ["scadable-kit"]
 
 [tool.uv.sources]
-scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.3.0" }
+scadable-kit = { git = "https://github.com/scadable/kit", tag = "v0.4.0" }
 ```
 
 The repository is public, so this needs no credentials: not in CI, not in a

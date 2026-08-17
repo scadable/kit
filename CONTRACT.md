@@ -27,6 +27,14 @@ Every error response, from any service, at any status code:
 - No other top level keys. Not `detail`, which is what FastAPI emits by default
   and must be overridden.
 
+One deliberate exception, stated rather than hidden: a **rejected CORS preflight**
+answers with the plain-text refusal the ASGI CORS middleware generates, not this
+envelope. Reimplementing CORS to wrap it would be a large amount of security-
+sensitive code for a body no browser ever surfaces to page script, and a preflight
+rejection is reported to the developer as a CORS error rather than read as JSON.
+Every other error, including one from an unrouted path or a rate limit, uses the
+envelope.
+
 Codes in use across the fleet: `invalid_request`, `unauthenticated`,
 `forbidden`, `not_found`, `conflict`, `already_exists`, `rate_limited`,
 `upstream_unavailable`, `not_configured`, `internal_error`. A service may add

@@ -120,15 +120,26 @@ def test_tokens_refill_over_time_but_never_past_the_burst() -> None:
 
 
 def test_a_forged_forwarded_header_cannot_mint_identities() -> None:
-    """A proxy APPENDS what it saw, so the leftmost entry is whatever the client
-    typed. Reading it would let anybody mint unlimited identities."""
+    """With one proxy declared, only the entry that proxy wrote is read.
+
+    A proxy APPENDS what it saw, so entries the caller controls sit on the left.
+    Reading those would let anybody mint unlimited identities by varying a
+    header, which defeats the limiter completely and silently.
+    """
     for forged in ("10.0.0.1, 203.0.113.9", "evil, 203.0.113.9", "203.0.113.9"):
-        assert client_address({"x-forwarded-for": forged}, "peer") == "203.0.113.9"
+        address = client_address({"x-forwarded-for": forged}, "peer", trusted_proxies=1)
+        assert address == "203.0.113.9"
+
+
+def test_the_header_is_ignored_when_no_proxy_is_declared() -> None:
+    """The safe default. A process reached directly has no proxy to have written
+    the header, so anything present was typed by whoever is calling."""
+    assert client_address({"x-forwarded-for": "10.9.9.9"}, "192.0.2.10") == "192.0.2.10"
 
 
 def test_the_peer_is_used_when_there_is_no_proxy() -> None:
-    assert client_address({}, "192.0.2.10") == "192.0.2.10"
-    assert client_address({"x-forwarded-for": "  "}, "192.0.2.10") == "192.0.2.10"
+    assert client_address({}, "192.0.2.10", trusted_proxies=1) == "192.0.2.10"
+    assert client_address({"x-forwarded-for": "  "}, "192.0.2.10", 1) == "192.0.2.10"
 
 
 def test_a_credential_is_never_the_key() -> None:

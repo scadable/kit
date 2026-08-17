@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import enum
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 # A check answers with None when the dependency is reachable, or raises.
 Check = Callable[[], Awaitable[None]]
@@ -196,6 +196,15 @@ class Registry:
         # it would report a dependency as ready without ever probing it.
         if not entry.name or (entry.check is None and not entry.reason):
             return
+        # One entry per name. The wire shape is a map, so a duplicate collapses
+        # there while the verdict still counts both, which produces a response
+        # saying not_ready with every listed dependency reading ready. Replacing
+        # is the honest resolution: the later registration is the one the author
+        # meant, and both surviving means the report contradicts itself.
+        for index, existing in enumerate(self._entries):
+            if existing.name == entry.name:
+                self._entries[index] = entry
+                return
         self._entries.append(entry)
 
     async def check(self) -> list[Result]:
@@ -207,11 +216,22 @@ class Registry:
         harder to compare.
         """
         entries = list(self._entries)
+        resolved: list[_Entry] = []
         unregistered = dict(self._required)
         for entry in entries:
-            unregistered.pop(entry.name, None)
+            if entry.name in unregistered:
+                unregistered.pop(entry.name)
+                # A declaration cannot be demoted by how the dependency was
+                # later registered. Without this, require("db") followed by
+                # add_optional("db", ...) removes the declaration AND leaves a
+                # non-blocking entry, so a dependency the service said it cannot
+                # work without silently stops blocking. That is the exact
+                # failure declaring dependencies up front exists to prevent, and
+                # it would be invisible: readiness would stay green.
+                entry = replace(entry, required=True, informational=False)
+            resolved.append(entry)
 
-        results: list[Result] = await asyncio.gather(*(self._run(entry) for entry in entries))
+        results: list[Result] = await asyncio.gather(*(self._run(entry) for entry in resolved))
 
         return results + [
             Result(

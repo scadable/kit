@@ -207,3 +207,41 @@ def test_no_extra_and_no_endpoint_is_silent(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(builtins, "__import__", missing)
 
     assert start_telemetry(service_name="s", version="v", environment="test") is False
+
+
+# --- the endpoint bug that shipped in 0.5.0 ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "signal", "expected"),
+    [
+        ("http://collector:4318", "traces", "http://collector:4318/v1/traces"),
+        ("http://collector:4318", "metrics", "http://collector:4318/v1/metrics"),
+        ("http://collector:4318/", "traces", "http://collector:4318/v1/traces"),
+        # Already specific: left alone rather than doubled.
+        ("http://c:4318/v1/traces", "traces", "http://c:4318/v1/traces"),
+        ("", "traces", ""),
+    ],
+)
+def test_the_endpoint_gets_its_signal_path(given: str, signal: str, expected: str) -> None:
+    """Passing `endpoint=` to an OTLP exporter overrides the SDK and is used
+    VERBATIM; only reading OTEL_EXPORTER_OTLP_ENDPOINT itself makes the SDK
+    append the signal path.
+
+    0.5.0 handed both exporters one base URL, so traces and metrics both POSTed
+    to the collector's root and got 404. The service served perfectly and the
+    only evidence was an export error in the logs, which is why this reached a
+    cluster before anyone noticed.
+    """
+    from kit.observability._tracing import signal_endpoint
+
+    assert signal_endpoint(given, signal) == expected
+
+
+def test_traces_and_metrics_do_not_share_one_url() -> None:
+    """The specific thing that was broken: one endpoint cannot be both signals."""
+    from kit.observability._tracing import signal_endpoint
+
+    base = "http://collector:4318"
+
+    assert signal_endpoint(base, "traces") != signal_endpoint(base, "metrics")

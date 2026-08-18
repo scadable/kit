@@ -26,7 +26,7 @@ _LEVELS = {
 }
 
 
-def _trace_context() -> dict[str, str]:
+def trace_context() -> dict[str, str]:
     """The active trace and span, when there is one.
 
     Imported lazily so the kit works without the telemetry extra installed: a
@@ -75,7 +75,7 @@ class JSONFormatter(logging.Formatter):
                 line["error_type"] = exc_type.__name__
                 line["error"] = str(exc_value)
 
-        line.update(_trace_context())
+        line.update(trace_context())
         return json.dumps(line, default=str)
 
 

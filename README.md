@@ -20,7 +20,8 @@ from kit.health import Registry
 | --- | --- |
 | `kit.httpapi` | The error envelope, the request-id middleware, the request log line, CORS, rate limiting, the shared `/readyz` handler |
 | `kit.health` | The readiness registry: `require()` before wiring, three states, checks run concurrently |
-| `kit.observability` | JSON logs with `trace_id` and `span_id` on every line, OTLP exporter setup |
+| `kit.observability` | JSON logs with `trace_id` and `span_id` on every line, OTLP traces and metrics, propagation in both directions |
+| `kit.clients` | Outbound calls: deadlines, retries with jitter, a circuit breaker, trace and request-id propagation, pluggable auth |
 | `kit.config` | Env loading, the service prefix, the `PORT` and `OTEL_*` exceptions, fail-fast process settings and fail-soft backing systems |
 | `kit.testing` | The contract tests a service inherits, so the shared behaviour is verified in every repository |
 
@@ -70,13 +71,20 @@ undocumented deviation reads as a mistake to the next person and gets
 
 ## What is deliberately not in it
 
-Database helpers, cache clients, object storage, service gateways. They were
-here in the first draft and were removed: no service has used them yet, and a
-shared abstraction designed before its second real consumer is a guess everyone
-then works around. They live in the service template's `infra/` until two
-services agree on what they should look like.
+Database helpers, cache clients, object storage. They were here in the first
+draft and were removed: no service has used them yet, and a shared abstraction
+designed before its second real consumer is a guess everyone then works around.
+They live in the service template's `infra/` until two services agree on what
+they should look like.
 
 **Code moves in on its third copy, not its first.**
+
+`kit.clients` is the exception, and the reason is worth stating rather than
+waving through: it is not an abstraction over a domain, it is the retry,
+timeout and breaker policy, and those are wrong in the same way in every service
+that writes them independently. Seven retry policies is seven different
+behaviours the first time a dependency gets slow, discovered during the incident.
+The typed gateway on top of it still lives in each service.
 
 Business models, ORM models, migrations, route trees and service settings never
 belong here at all.

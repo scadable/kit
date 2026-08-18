@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from kit.observability._tracing import signal_endpoint
+
 _meter: Any = None
 _provider: Any = None
 _instruments: dict[str, Any] = {}
@@ -86,7 +88,9 @@ def start_metrics(
     # report why it stopped. Telemetry must never be the reason a shutdown is
     # not clean.
     reader = PeriodicExportingMetricReader(
-        OTLPMetricExporter(endpoint=endpoint, timeout=EXPORT_TIMEOUT_SECONDS)
+        OTLPMetricExporter(
+            endpoint=signal_endpoint(endpoint, "metrics"), timeout=EXPORT_TIMEOUT_SECONDS
+        )
     )
     provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(provider)

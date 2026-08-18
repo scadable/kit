@@ -37,6 +37,28 @@ _provider: Any = None
 log = logging.getLogger("kit.observability")
 
 
+def signal_endpoint(endpoint: str, signal: str) -> str:
+    """Append the signal path unless the caller already gave one.
+
+    Passing `endpoint=` to an OTLP exporter overrides the SDK entirely and is
+    used VERBATIM. Only when the SDK reads OTEL_EXPORTER_OTLP_ENDPOINT itself
+    does it append /v1/traces or /v1/metrics. So handing both exporters one base
+    URL posts both signals to the collector's root, which answers 404, and the
+    only symptom is an export error in the logs while the service serves
+    perfectly. That is exactly how this shipped.
+
+    Both forms are accepted because both exist in the wild: a base URL from an
+    operator who read the OTel docs, and a full signal URL from one who read
+    this kit's tests.
+    """
+    if not endpoint:
+        return endpoint
+    trimmed = endpoint.rstrip("/")
+    if trimmed.endswith(("/v1/traces", "/v1/metrics", "/v1/logs")):
+        return trimmed
+    return f"{trimmed}/v1/{signal}"
+
+
 def start_telemetry(
     *,
     service_name: str,
@@ -92,7 +114,11 @@ def start_telemetry(
         # unreachable collector must not outlast the pod's termination grace
         # period and turn a clean stop into a SIGKILL.
         provider.add_span_processor(
-            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, timeout=EXPORT_TIMEOUT_SECONDS))
+            BatchSpanProcessor(
+                OTLPSpanExporter(
+                    endpoint=signal_endpoint(endpoint, "traces"), timeout=EXPORT_TIMEOUT_SECONDS
+                )
+            )
         )
 
     trace.set_tracer_provider(provider)

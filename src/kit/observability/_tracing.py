@@ -6,15 +6,27 @@ wrap, and for this product the risk is specific: it will happily capture
 repository paths, SQL parameters and arbitrary headers into spans, which is the
 class of data we exist to keep track of.
 
-No exporter endpoint configured means no exporter is installed. The service still
-logs JSON, and trace context still propagates, so a request crossing services
-keeps its identity even where nothing is being exported.
+THE PROVIDER IS INSTALLED WHETHER OR NOT ANYTHING IS EXPORTED. Only the exporter
+is conditional on an endpoint. That is what makes the next sentence true, and it
+was not true before: a service with no collector configured still propagates
+trace context and still puts ``trace_id`` on every log line, so one identifier
+follows a request across services in an environment that has no tracing backend
+at all. Grepping one id across five services is most of the value here, and it
+should not require infrastructure.
+
+It is not free. A non-exporting service still creates spans; with no span
+processor attached they are dropped immediately, which is cheap rather than
+costless. The trade buys log correlation everywhere, and a correlation id that
+is missing in development is a correlation id nobody trusts in production.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Any
+
+EXPORT_TIMEOUT_SECONDS = 5
+"""Inside the default 10s shutdown budget."""
 
 _PROBE_PATHS = "/healthz,/readyz"
 """Excluded from tracing. Otherwise every probe becomes a sampled span and the
@@ -32,34 +44,35 @@ def start_telemetry(
     environment: str,
     endpoint: str = "",
 ) -> bool:
-    """Install the tracer provider. Returns whether exporting is on.
+    """Install the tracer provider. Returns whether telemetry is INSTALLED.
+
+    Not whether it is exporting, and the distinction is the whole fix. The
+    caller uses this answer to decide whether to instrument, and instrumentation
+    is what propagates context and correlates logs. Gating it on the endpoint,
+    which is what this used to do, left a service without a collector with no
+    trace ids anywhere, while this module's own docstring promised otherwise.
 
     Everything except the endpoint is read by the OpenTelemetry SDK from its own
-    standard ``OTEL_*`` variables, so sampling and headers are configured the way
-    every other OTel deployment configures them rather than through a second set
-    of names that can disagree.
+    standard ``OTEL_*`` variables, so sampling, propagators and headers are
+    configured the way every other OTel deployment configures them rather than
+    through a second set of names that can disagree.
     """
     global _provider
 
-    if not endpoint:
-        return False
-
     try:
         from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
-        )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError:
-        # Configured to export, but the extra is not installed. Loud, because
-        # the operator asked for something they are not getting, and continuing
-        # silently means discovering it when a trace is needed.
-        log.warning(
-            "telemetry endpoint is configured but the otel extra is not installed",
-            extra={"endpoint_configured": True},
-        )
+        if endpoint:
+            # Configured to export, but the extra is not installed. Loud,
+            # because the operator asked for something they are not getting and
+            # continuing silently means discovering it when a trace is needed,
+            # which is during an incident.
+            log.warning(
+                "telemetry endpoint is configured but the otel extra is not installed",
+                extra={"endpoint_configured": True},
+            )
         return False
 
     resource = Resource.create(
@@ -70,7 +83,18 @@ def start_telemetry(
         }
     )
     provider = TracerProvider(resource=resource)
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
+
+    if endpoint:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        # Bounded, for the same reason as metrics: shutdown flushes, and an
+        # unreachable collector must not outlast the pod's termination grace
+        # period and turn a clean stop into a SIGKILL.
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, timeout=EXPORT_TIMEOUT_SECONDS))
+        )
+
     trace.set_tracer_provider(provider)
     _provider = provider
     return True
@@ -81,6 +105,10 @@ def instrument_app(app: Any) -> None:
 
     Once, not twice: instrumenting FastAPI and the generic ASGI layer both
     produces two spans per request and doubles every latency percentile.
+
+    This is where INBOUND propagation comes from. A request carrying
+    ``traceparent`` joins that trace; one without starts a new one. Both halves
+    are the instrumentation's doing rather than ours.
     """
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -88,6 +116,27 @@ def instrument_app(app: Any) -> None:
         return
 
     FastAPIInstrumentor.instrument_app(app, excluded_urls=_PROBE_PATHS)
+
+
+def instrument_client(client: Any) -> None:
+    """Instrument ONE httpx client, so outbound calls carry ``traceparent``.
+
+    The other half of propagation, and the half that was missing entirely:
+    without it a call from service A to service B sends no context, B starts a
+    brand new trace, and one request appears in the backend as two unrelated
+    traces with nothing linking them.
+
+    Per client rather than process-wide. ``HTTPXClientInstrumentor().instrument()``
+    patches httpx globally, which is the auto-discovery behaviour this module
+    exists to avoid: it would also wrap the test suite's own clients and
+    anything a dependency happens to construct.
+    """
+    try:
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    except ImportError:
+        return
+
+    HTTPXClientInstrumentor.instrument_client(client)
 
 
 def shutdown_telemetry() -> None:

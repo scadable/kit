@@ -121,13 +121,23 @@ async def test_a_handler_that_already_answered_is_not_overwritten() -> None:
     assert response.status_code == 202
 
 
-def test_telemetry_is_off_without_an_endpoint() -> None:
-    """No endpoint means no exporter is installed. The service still logs, and
-    trace context still propagates."""
-    assert (
-        start_telemetry(service_name="kit-service", version="dev", environment="test", endpoint="")
-        is False
+def test_telemetry_is_installed_without_an_endpoint() -> None:
+    """No endpoint means no EXPORTER. It does not mean no provider.
+
+    This test used to assert the opposite and its docstring claimed trace
+    context still propagated, which is the combination that hid the bug: the
+    provider was never installed, so nothing propagated and no log line carried
+    a trace id, in exactly the environments where somebody reads logs by hand.
+
+    tests/test_propagation.py asserts the behaviour this enables; what is
+    checked here is that the switch is on.
+    """
+    installed = start_telemetry(
+        service_name="kit-service", version="dev", environment="test", endpoint=""
     )
+    shutdown_telemetry()
+
+    assert installed is True
 
 
 def test_instrumenting_without_the_extra_is_a_no_op() -> None:

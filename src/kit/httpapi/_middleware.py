@@ -23,6 +23,13 @@ from kit.httpapi._envelope import (
     request_id_var,
 )
 
+# The private module, not the package. kit.observability's __init__ pulls in
+# tracing, and importing a package for two names is how an import cycle gets
+# built between two halves of the kit that have no reason to know about each
+# other.
+from kit.observability._logging import trace_context
+from kit.observability._metrics import SERVER_DURATION, SERVER_REQUESTS, record
+
 Dispatch = Callable[[Request], Awaitable[Response]]
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -83,11 +90,18 @@ class RequestLogMiddleware:
         started = time.perf_counter()
         status = 200
         written = 0
+        correlation: dict[str, str] = {}
 
         async def send_observed(message: Message) -> None:
             nonlocal status, written
             if message["type"] == "http.response.start":
                 status = message["status"]
+                # Captured HERE, not where the line is written. The tracing
+                # span is active during the call below and finished by the
+                # time the finally block runs, so reading the context there
+                # found nothing and the request-completed line, the single
+                # most useful line to correlate, went out with no trace id.
+                correlation.update(trace_context())
             # No branch on the message type: only body messages carry a body, so
             # the default covers every other kind, including the trailers a
             # future protocol might add.
@@ -97,17 +111,30 @@ class RequestLogMiddleware:
         try:
             await self.app(scope, receive, send_observed)
         finally:
+            method = scope.get("method", "")
+            route = _route_pattern(scope)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+
             self.logger.info(
                 "HTTP request completed",
                 extra={
                     "request_id": request_id_var.get(),
-                    "method": scope.get("method", ""),
-                    "route": _route_pattern(scope),
+                    "method": method,
+                    "route": route,
                     "status": status,
                     "bytes": written,
-                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                    "duration_ms": int(elapsed_ms),
+                    **correlation,
                 },
             )
+
+            # Metrics come off the SAME measurement as the log line, rather than
+            # from a second one that can disagree with it, and they inherit the
+            # route-pattern discipline below for free. A duration in a dashboard
+            # that does not match the duration in the log is a half hour of an
+            # incident spent working out which one is lying.
+            record(SERVER_REQUESTS, 1, route=route, method=method, status=status)
+            record(SERVER_DURATION, elapsed_ms, route=route, method=method, status=status)
 
 
 def _route_pattern(scope: Scope) -> str:

@@ -9,7 +9,7 @@
 
 [project]
 name = "scadable-kit"
-version = "0.4.0"
+version = "0.5.0"
 description = "Cross-cutting behaviour shared by every SCADABLE service"
 requires-python = ">=3.14,<3.15"
 license = { file = "LICENSE" }
@@ -28,6 +28,10 @@ dependencies = [
     "fastapi>=0.141,<0.142",
     "pydantic>=2.13,<3",
     "pydantic-settings>=2.7,<3",
+    # kit.clients is the fleet's outbound transport, and every service calls
+    # either another service or a third party. An extra would mean a service
+    # that forgot it discovers the ImportError at startup.
+    "httpx>=0.28,<0.29",
 ]
 
 # Telemetry is an optional extra so a service that does not export traces does
@@ -37,6 +41,9 @@ otel = [
     "opentelemetry-sdk>=1.44,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.44,<2",
     "opentelemetry-instrumentation-fastapi>=0.65b0",
+    # Outbound propagation. Without it a call from A to B carries no
+    # traceparent, B starts a new trace, and one request is two unlinked traces.
+    "opentelemetry-instrumentation-httpx>=0.65b0",
 ]
 
 [build-system]

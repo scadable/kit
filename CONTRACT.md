@@ -100,12 +100,36 @@ log `route: "unmatched"`.
 
 ## Telemetry
 
-OpenTelemetry over OTLP, push only. There is no `/metrics` endpoint and no
-Prometheus dependency anywhere in the fleet: replicas have separate
-filesystems, so a load-balanced scrape reaches exactly one of them.
+OpenTelemetry over OTLP, push only, for traces AND metrics. There is no
+`/metrics` endpoint and no Prometheus dependency anywhere in the fleet: services
+push to one Collector, which is one scrape target for Prometheus instead of
+seven services times N replicas, and nothing has to discover pods to find
+metrics. Prometheus and Grafana work exactly as expected; they read from the
+Collector.
+
+**Trace context propagates in both directions, whether or not anything is
+exported.** A request carrying `traceparent` joins that trace; one without
+starts a new one; and every outbound call made through `kit.clients` carries it
+onward, so one request is one trace across the fleet.
 
 Standard `OTEL_*` environment variables, unprefixed. An empty exporter endpoint
-means no exporter is installed, and the service still logs JSON to stdout.
+means no exporter, not no tracing: the provider is still installed, context
+still propagates, and every log line still carries its `trace_id`. Metrics are
+the exception and are off entirely without an endpoint, because a meter nobody
+reads only costs memory.
+
+## Calling other services
+
+Outbound calls go through `kit.clients`, one client per dependency, built in the
+composition root. Every call carries a deadline, `traceparent`, the INBOUND
+`X-Request-ID` propagated rather than a fresh one, and an `Authorization` header
+from a pluggable hook.
+
+Retries are on idempotent methods only unless an idempotency key is supplied,
+with exponential backoff and full jitter, on 429, 502, 503 and 504 alone. A
+breaker sheds an upstream after consecutive failures and probes once per
+recovery window. An open breaker is **informational** in `/readyz` and never
+blocks readiness.
 
 ## Configuration
 

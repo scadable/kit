@@ -29,12 +29,19 @@ THE FAILURE SPLIT IS THE POINT. Sending is the one call where "try again" and
 A caller that collapses those either retries bad addresses forever or drops
 recoverable sends, and both read from outside as "email is flaky".
 
-EXACTLY ONCE IS THE CALLER'S TO ASK FOR. A POST that timed out may well have
-been delivered, so kit.clients does not retry one without an idempotency key.
-Pass a key that is stable for the message and the duplicate becomes the
-provider's to collapse rather than ours to cause; omit it and a timeout is a
-send that is not retried at all. There is no third option, and the choice
-belongs to whoever knows whether a second copy is worse than none.
+DUPLICATE SUPPRESSION IS BOUNDED, AND IT IS THE CALLER'S TO ASK FOR. A POST
+that timed out may well have been delivered, so kit.clients does not retry one
+without an idempotency key. Pass a key that is stable for the message and the
+duplicate becomes the provider's to collapse; omit it and a timeout is a send
+that is not retried at all.
+
+What that buys is bounded, not exactly-once. Resend remembers a key for about a
+day, so a retry after its window has expired is simply a second send, and a
+durable queue that redelivers days later will mail somebody twice no matter what
+key it carries. Anything that retries on a longer horizon than the provider
+remembers needs its own record of what it already sent, and the window is the
+provider's policy rather than ours, so check theirs rather than trusting this
+sentence.
 """
 
 from kit.email._message import Delivery, Emailer, EmailMessage

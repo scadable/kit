@@ -169,6 +169,18 @@ async def test_a_refused_address_is_permanent() -> None:
     assert len(seen) == 1, "a 4xx is the provider working correctly and must not be retried"
 
 
+@pytest.mark.parametrize("status", [500, 502, 409])
+async def test_a_provider_side_failure_is_transient_not_permanent(status: int) -> None:
+    """kit.clients raises Rejected for every non-retryable status at or above
+    400, a 500 included. Left alone that would tell a caller a provider outage
+    is permanent, and a durable caller would mark a recoverable send dead. A 409
+    is our own retry racing itself on one idempotency key."""
+    emailer, _ = emailer_for(httpx.Response(status))
+
+    with pytest.raises(UpstreamUnavailable):
+        await emailer.send(message(), idempotency_key="invite_7")
+
+
 async def test_an_unreachable_provider_is_transient() -> None:
     emailer, _ = emailer_for(httpx.ConnectError("no route"))
 
@@ -185,16 +197,17 @@ async def test_an_unreachable_provider_is_transient() -> None:
         httpx.Response(200, json={"nothing": "useful"}),
         httpx.Response(200, json=["not", "an", "object"]),
         httpx.Response(200, json={"id": 7}),
+        httpx.Response(200, json={"id": ""}),
     ],
 )
-async def test_an_unexpected_body_still_counts_as_accepted(response: httpx.Response) -> None:
-    """The message was taken. Raising here would turn a delivered email into a
-    caller-visible failure, and into two if the caller then retries."""
+async def test_a_success_without_a_message_id_is_not_a_receipt(response: httpx.Response) -> None:
+    """Resend names every message it accepts, so a 200 with no id is something
+    else answering, and reporting it as delivered is the worse failure: the mail
+    never arrives and nothing says so."""
     emailer, _ = emailer_for(response)
 
-    delivery = await emailer.send(message())
-
-    assert delivery == Delivery(id="", provider="resend")
+    with pytest.raises(UpstreamUnavailable, match="message id"):
+        await emailer.send(message())
 
 
 # --- refusing what no provider could accept ---------------------------------

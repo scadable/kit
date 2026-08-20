@@ -48,7 +48,7 @@ jobs:
           uv venv --python 3.14 .venv-minimal
           VIRTUAL_ENV=.venv-minimal uv pip install .
           VIRTUAL_ENV=.venv-minimal uv run --no-project python -c "
-          import kit, kit.health, kit.httpapi, kit.config, kit.observability
+          import kit, kit.health, kit.httpapi, kit.config, kit.observability, kit.email
           print('kit', kit.__version__, 'imports without the otel extra')
           "
 

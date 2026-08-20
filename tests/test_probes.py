@@ -121,3 +121,77 @@ async def test_required_unconfigured_blocks_and_optional_does_not(
 
     assert response.status_code == expected_status
     assert response.json()["checks"] == {"auth": "unconfigured"}
+
+
+async def test_steady_state_is_logged_once_not_once_per_probe(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """THE reason this logging is keyed by state rather than emitted per call.
+
+    A kubelet polls /readyz every few seconds for the life of the pod. Logging
+    steady state here would emit the same warning thousands of times a day per
+    replica, which does not make the signal louder: it buries the line that
+    matters (a dependency that JUST broke) under identical copies of a line
+    that has been true since boot, and bills for the privilege.
+    """
+    registry = Registry()
+    # Optional, exactly as a real service declares its cache: an absent
+    # cache is a slower service, not a broken one, so readiness stays 200.
+    registry.add_optional_unconfigured("valkey", "CACHE_URL is empty")
+    app = build(registry)
+
+    with caplog.at_level("WARNING", logger="kit.httpapi"):
+        for _ in range(5):
+            assert (await call(app, "/readyz")).status_code == 200
+
+    unconfigured = [r for r in caplog.records if r.msg == "dependency is not configured"]
+    assert len(unconfigured) == 1, (
+        f"five probes produced {len(unconfigured)} warnings; steady state must log once"
+    )
+
+
+async def test_a_failing_dependency_logs_once_while_it_stays_failing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = Registry()
+    registry.add("postgres", failing_check(RuntimeError("down")))
+    app = build(registry)
+
+    with caplog.at_level("WARNING", logger="kit.httpapi"):
+        for _ in range(4):
+            assert (await call(app, "/readyz")).status_code == 503
+
+    failures = [r for r in caplog.records if r.msg == "dependency check failed"]
+    assert len(failures) == 1
+
+
+async def test_both_edges_of_a_flap_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Breaking and recovering are each worth exactly one line.
+
+    Without the recovery line a log shows only half of every incident: the
+    moment it broke, and never the moment it came back.
+    """
+    healthy = True
+
+    async def flapping() -> None:
+        if not healthy:
+            raise RuntimeError("down")
+
+    registry = Registry()
+    registry.add("postgres", flapping)
+    app = build(registry)
+
+    with caplog.at_level("INFO", logger="kit.httpapi"):
+        assert (await call(app, "/readyz")).status_code == 200
+        healthy = False
+        assert (await call(app, "/readyz")).status_code == 503
+        assert (await call(app, "/readyz")).status_code == 503
+        healthy = True
+        assert (await call(app, "/readyz")).status_code == 200
+
+    assert [r.msg for r in caplog.records if r.msg == "dependency check failed"] == [
+        "dependency check failed"
+    ]
+    assert [r.msg for r in caplog.records if r.msg == "dependency recovered"] == [
+        "dependency recovered"
+    ]

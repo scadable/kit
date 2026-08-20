@@ -50,6 +50,12 @@ def probe_router(
     moved with an API version would need the deployment updated in lockstep.
     """
     log = logger or logging.getLogger("kit.httpapi")
+    # Last state logged per dependency, so /readyz reports transitions rather
+    # than repeating steady state on every kubelet poll. Per router, which means
+    # per app, which means per process: a replica that restarts re-establishes
+    # its own baseline and logs what it finds once.
+    logged: dict[str, tuple[State, str, str]] = {}
+
     router = APIRouter(include_in_schema=False)
 
     @router.get("/healthz")
@@ -83,28 +89,59 @@ def probe_router(
             if result.blocking:
                 ready = False
 
+            # ON TRANSITION ONLY, never once per probe. A kubelet polls /readyz
+            # every few seconds forever, so logging steady state here emits the
+            # same warning thousands of times a day per replica. That is not a
+            # louder signal, it is a quieter one: the line that matters (a
+            # dependency that JUST broke) is buried in identical copies of a
+            # line that has been true since boot, and it is billed by the
+            # gigabyte in the log store.
+            #
+            # Keyed by dependency, holding the last state and reason we logged,
+            # so a flap from ready to error to ready logs both edges while a
+            # dependency sitting unconfigured since startup logs exactly once.
+            previous = logged.get(result.name)
+            current = (result.effective, result.reason, str(result.error))
+            changed = previous != current
+
+            if changed:
+                logged[result.name] = current
+
             if result.effective is State.ERROR:
-                # The detail stays server-side.
-                log.warning(
-                    "dependency check failed",
-                    extra={
-                        "request_id": request_id(),
-                        "dependency": result.name,
-                        "required": result.required,
-                        "error": str(result.error),
-                    },
-                )
+                if changed:
+                    # The detail stays server-side.
+                    log.warning(
+                        "dependency check failed",
+                        extra={
+                            "request_id": request_id(),
+                            "dependency": result.name,
+                            "required": result.required,
+                            "error": str(result.error),
+                        },
+                    )
             elif result.effective is State.UNCONFIGURED:
-                # Logged even when it is not blocking, because "this deployment
-                # has no object storage" is exactly the fact somebody needs when
-                # a feature is mysteriously absent.
-                log.warning(
-                    "dependency is not configured",
+                if changed:
+                    # Still logged, because "this deployment has no object
+                    # storage" is exactly the fact somebody needs when a feature
+                    # is mysteriously absent. Once is enough to establish it.
+                    log.warning(
+                        "dependency is not configured",
+                        extra={
+                            "request_id": request_id(),
+                            "dependency": result.name,
+                            "required": result.required,
+                            "reason": result.reason,
+                        },
+                    )
+            elif changed and previous is not None:
+                # Recovery is worth a line: it is the other half of any
+                # incident, and without it a log shows only the breakage.
+                log.info(
+                    "dependency recovered",
                     extra={
                         "request_id": request_id(),
                         "dependency": result.name,
                         "required": result.required,
-                        "reason": result.reason,
                     },
                 )
 

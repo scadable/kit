@@ -33,7 +33,27 @@ MAX_AGE_SECONDS = 600
 allow-list takes effect the same day."""
 
 CREDENTIALED_METHODS = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-CREDENTIALED_HEADERS = "Authorization, Content-Type"
+CREDENTIALED_HEADERS = "Authorization, Content-Type, X-Organization-ID"
+"""Request headers a credentialed cross-origin caller may send.
+
+X-Organization-ID is NARROWER THAN THIS CONSTANT AND IS HERE ANYWAY, which is a
+deliberate trade rather than an oversight. Only api scopes by organization, so
+every other service now advertises a header it will never read. That is untrue
+and harmless, and it was chosen over the correct fix under time pressure with a
+customer-facing surface down.
+
+THE CORRECT FIX IS AN OVERRIDE ON THE CORS DATACLASS: an `extra_headers` field
+defaulting to empty, appended at the install site, so a service declares the
+headers it actually reads and this constant carries only what every service
+shares. That is roughly four lines and changes nothing for a service that does
+not set it. It was not taken because the shortest path mattered more in the
+moment, not because it is worse.
+
+The reason it is worth going back for: a shared constant that is untrue for most
+of its consumers stops being a fleet contract and becomes a list somebody
+appends to. The next service to need a header will face the same choice, and the
+argument for narrow will be one header weaker each time.
+"""
 
 PUBLIC_READ_METHODS = "GET, HEAD, OPTIONS"
 PUBLIC_READ_HEADERS = "If-None-Match"

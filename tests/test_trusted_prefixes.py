@@ -167,3 +167,95 @@ async def test_both_cors_modes_honour_the_exemption(public_read: bool) -> None:
     response = await get(app, f"{ADMIN}/v1/organizations", {"origin": ORIGIN})
 
     assert "access-control-allow-origin" not in response.headers
+
+
+class TestTheExemptionCannotBecomeOverbroad:
+    """Three ways a prefix exemption goes wrong, all found in review.
+
+    Each one fails in the direction that does not announce itself: the first
+    silently exempts everything, the second silently exempts a neighbour, and the
+    third silently exempts nothing at all.
+    """
+
+    def test_an_empty_prefix_is_refused_at_construction(self) -> None:
+        """THE ONE THAT MATTERS. Every path starts with the empty string, so a
+        single empty entry exempts the whole application from both CORS and rate
+        limiting, with a green deployment and nothing in the logs.
+
+        Not a hypothetical typo either: splitting an unset comma-separated
+        environment variable produces exactly `("",)`, which is the ordinary
+        shape of a setting somebody forgot to fill in.
+        """
+        with pytest.raises(ValueError, match="absolute paths"):
+            app_with(trusted=("",))
+
+    def test_a_relative_prefix_is_refused_too(self) -> None:
+        """It can never match, so it is a statement that does nothing. Failing is
+        right for the same reason: somebody wrote it expecting an effect."""
+        with pytest.raises(ValueError, match="absolute paths"):
+            app_with(trusted=("api/admin",))
+
+    async def test_a_neighbouring_route_is_not_exempt(self) -> None:
+        """Trusting `/api/admin` must not exempt `/api/admin-fake`.
+
+        This is the same mistake `EXEMPT_PATHS` avoids by staying exact for the
+        probes, and the first version of this feature made it: a bare
+        `startswith` reads correct and hands an unrelated route the exemption.
+        """
+        app = app_with(trusted=(ADMIN,))
+
+        @app.get("/api/admin-fake")
+        async def neighbour() -> dict[str, bool]:
+            return {"ok": True}
+
+        response = await get(app, "/api/admin-fake", {"origin": ORIGIN})
+
+        assert response.headers["access-control-allow-origin"] == ORIGIN
+
+    async def test_the_prefix_itself_is_exempt(self) -> None:
+        """The boundary rule is "equal, or followed by a slash". Without the
+        first half, trusting `/api/admin` would exempt everything under it and
+        not the collection route itself."""
+        app = app_with(trusted=(ADMIN,))
+
+        @app.get(ADMIN)
+        async def root() -> dict[str, bool]:
+            return {"ok": True}
+
+        response = await get(app, ADMIN, {"origin": ORIGIN})
+
+        assert "access-control-allow-origin" not in response.headers
+
+    async def test_a_neighbouring_route_is_still_rate_limited(self) -> None:
+        """The same boundary, on the other middleware. One module answers this
+        question for both so they cannot drift."""
+        app = app_with(trusted=(ADMIN,), limit=RateLimit(requests=1, window_seconds=60.0, burst=1))
+
+        @app.get("/api/administrator")
+        async def neighbour() -> dict[str, bool]:
+            return {"ok": True}
+
+        first = await get(app, "/api/administrator")
+        second = await get(app, "/api/administrator")
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+
+
+async def test_the_exemption_survives_being_mounted_under_a_prefix() -> None:
+    """`scope["path"]` carries the mount prefix, so a service mounted at
+    `/service` would compare `/service/api/admin/...` against `/api/admin` and
+    never match.
+
+    That failure is silent and in the SAFE direction, which is exactly why it
+    would have survived: the exemption never applies, CORS and the limiter stay
+    on, and nothing reports that the feature did nothing.
+    """
+    inner = app_with(trusted=(ADMIN,))
+    outer = FastAPI()
+    outer.mount("/service", inner)
+
+    response = await get(outer, f"/service{ADMIN}/v1/organizations", {"origin": ORIGIN})
+
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers

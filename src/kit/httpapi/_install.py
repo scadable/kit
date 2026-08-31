@@ -24,6 +24,7 @@ from kit.httpapi._middleware import (
     RequestIDMiddleware,
     RequestLogMiddleware,
 )
+from kit.httpapi._prefixes import normalize_trusted_prefixes
 from kit.httpapi._probes import probe_router
 from kit.httpapi._ratelimit import RateLimit
 from kit.httpapi._ratelimit_middleware import RateLimitMiddleware
@@ -88,6 +89,9 @@ def install_conventions(
     is exactly as reachable as it was, and whatever guards its router still does.
     """
     log = logger or logging.getLogger("kit.httpapi")
+    # Checked before a single middleware is added, so a service configured
+    # into "exempt everything" fails to start rather than serving wide open.
+    trusted_prefixes = normalize_trusted_prefixes(trusted_prefixes)
 
     # Innermost first, because Starlette wraps in reverse.
     if rate_limit is not None:

@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from kit.httpapi._envelope import RATE_LIMITED, error_response
+from kit.httpapi._prefixes import under
 from kit.httpapi._ratelimit import (
     SESSION_COOKIE,
     Limiter,
@@ -81,12 +82,11 @@ class RateLimitMiddleware:
         self.exempt_prefixes = exempt_prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        path: str = scope.get("path", "")
         if (
             scope["type"] != "http"
             or not self.enabled
-            or path in self.exempt_paths
-            or (bool(self.exempt_prefixes) and path.startswith(self.exempt_prefixes))
+            or scope.get("path", "") in self.exempt_paths
+            or under(scope, self.exempt_prefixes)
         ):
             await self.app(scope, receive, send)
             return

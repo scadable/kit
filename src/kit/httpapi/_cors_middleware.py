@@ -7,6 +7,8 @@ from typing import Any
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from kit.httpapi._prefixes import under
+
 
 class ScopedCORSMiddleware:
     """``CORSMiddleware``, skipped entirely under a trusted prefix.
@@ -45,14 +47,10 @@ class ScopedCORSMiddleware:
     ) -> None:
         self.app = app
         self.cors = CORSMiddleware(app, **options)
-        # A tuple, because `str.startswith` takes one and testing a tuple is a
-        # single call rather than a loop that a future edit turns into `any`.
         self.prefixes = prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and self.prefixes:
-            path: str = scope.get("path", "")
-            if path.startswith(self.prefixes):
-                await self.app(scope, receive, send)
-                return
+        if scope["type"] == "http" and under(scope, self.prefixes):
+            await self.app(scope, receive, send)
+            return
         await self.cors(scope, receive, send)

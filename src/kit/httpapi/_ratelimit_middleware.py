@@ -62,18 +62,31 @@ class RateLimitMiddleware:
         limit: RateLimit,
         logger: logging.Logger | None = None,
         exempt_paths: frozenset[str] = EXEMPT_PATHS,
+        exempt_prefixes: tuple[str, ...] = (),
     ) -> None:
         self.app = app
         self.log = logger or logging.getLogger("kit.httpapi")
         self.limiter = Limiter(limit=limit, logger=self.log)
         self.enabled = not limit.off
         self.exempt_paths = exempt_paths
+        # PREFIXES ARE A SEPARATE FIELD FROM PATHS, and the two matching rules
+        # differ on purpose. The probes are exempted by EXACT match so that
+        # `/healthz-fake` inherits nothing; a whole operator surface has to be
+        # exempted by prefix because its routes are not enumerable here.
+        #
+        # Widening `exempt_paths` to prefix matching would have been one less
+        # field and would silently have exempted every path merely BEGINNING
+        # with `/healthz`, which is the kind of change that looks like a
+        # simplification in review and is a hole afterwards.
+        self.exempt_prefixes = exempt_prefixes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        path: str = scope.get("path", "")
         if (
             scope["type"] != "http"
             or not self.enabled
-            or scope.get("path", "") in self.exempt_paths
+            or path in self.exempt_paths
+            or (bool(self.exempt_prefixes) and path.startswith(self.exempt_prefixes))
         ):
             await self.app(scope, receive, send)
             return

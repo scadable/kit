@@ -40,6 +40,14 @@ CLIENT_DURATION = "http.client.duration"
 CLIENT_ATTEMPTS = "http.client.attempts"
 CLIENT_BREAKER_OPEN = "http.client.breaker_open"
 
+# MESSAGING. The label is the STREAM, never the subject: a subject carries a
+# tenant id in most useful designs, and the module docstring above is about
+# exactly that turning one series into millions.
+MESSAGING_PUBLISHED = "messaging.published"
+MESSAGING_CONSUMED = "messaging.consumed"
+MESSAGING_SETTLED = "messaging.settled"
+MESSAGING_DELIVERIES = "messaging.deliveries"
+
 
 def start_metrics(
     *,
@@ -127,6 +135,22 @@ def _build(meter: Any) -> dict[str, Any]:
         ),
         CLIENT_BREAKER_OPEN: meter.create_up_down_counter(
             CLIENT_BREAKER_OPEN, unit="1", description="Upstreams currently being shed"
+        ),
+        MESSAGING_PUBLISHED: meter.create_counter(
+            MESSAGING_PUBLISHED, unit="1", description="Messages published, by stream"
+        ),
+        MESSAGING_CONSUMED: meter.create_counter(
+            MESSAGING_CONSUMED, unit="1", description="Messages received, by stream"
+        ),
+        MESSAGING_SETTLED: meter.create_counter(
+            MESSAGING_SETTLED,
+            unit="1",
+            description="Messages settled, by outcome: ack, nak or term",
+        ),
+        MESSAGING_DELIVERIES: meter.create_histogram(
+            MESSAGING_DELIVERIES,
+            unit="1",
+            description="Delivery attempt this message is on. Above 1 is redelivery.",
         ),
     }
 

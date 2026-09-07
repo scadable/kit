@@ -9,7 +9,7 @@
 
 [project]
 name = "scadable-kit"
-version = "0.6.1"
+version = "0.7.0"
 description = "Cross-cutting behaviour shared by every SCADABLE service"
 requires-python = ">=3.14,<3.15"
 license = { file = "LICENSE" }
@@ -45,6 +45,12 @@ otel = [
     # traceparent, B starts a new trace, and one request is two unlinked traces.
     "opentelemetry-instrumentation-httpx>=0.65b0",
 ]
+# The bus is an extra for the same reason telemetry is: most services never
+# touch it, and a dependency here is one every service in the fleet inherits and
+# cannot refuse. `kit.messaging` imports cleanly without it, and raises a
+# BrokerUnavailable naming this extra if something actually tries to connect,
+# which is a failure a service that forgot can read.
+nats = ["nats-py>=2.15,<3"]
 
 [build-system]
 requires = ["hatchling"]

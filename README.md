@@ -24,6 +24,7 @@ from kit.health import Registry
 | `kit.clients` | Outbound calls: deadlines, retries with jitter, a circuit breaker, trace and request-id propagation, pluggable auth |
 | `kit.config` | Env loading, the service prefix, the `PORT` and `OTEL_*` exceptions, fail-fast process settings and fail-soft backing systems |
 | `kit.email` | Outbound mail: the message every provider agrees on, and one Resend adapter on top of `kit.clients` |
+| `kit.messaging` | The event bus: publish and pull-subscribe over NATS JetStream, explicit ack, nak and term, and the four headers tenancy and idempotency travel in |
 | `kit.testing` | The contract tests a service inherits, so the shared behaviour is verified in every repository |
 
 About a thousand lines. The most important piece is also the smallest: roughly
@@ -94,6 +95,20 @@ same way in every service that decides them alone. The boundary that keeps it
 honest is what it refuses to hold. Templates, rendered copy and which person
 receives which message stay in the service, because those are the parts that
 differ, and a package holding them would be a mail product rather than a seam.
+
+`kit.messaging` is admitted on the same argument and is worth checking against
+it just as hard, because it arrived on its FIRST copy rather than its third. It
+is not an abstraction over a domain: it is the ack policy, the redelivery
+behaviour, the reconnection settings and the header convention, and those go
+wrong the same way in every service that decides them alone. They also go wrong
+invisibly, and are found during an incident, with a consumer that has been
+quietly reprocessing or quietly skipping.
+
+The boundary that keeps it honest is again what it refuses to hold. The payload
+is opaque bytes: there is no schema, no event registry and no versioning, because
+what an event IS belongs to the services that agree on it. It creates no streams
+and no consumers either, since retention and replica counts are operational
+decisions, and a library that makes them makes them once, wrongly, in production.
 
 Business models, ORM models, migrations, route trees and service settings never
 belong here at all.

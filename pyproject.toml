@@ -25,7 +25,7 @@ classifiers = [
 # Deliberately thin. Every dependency added here is a dependency every service
 # in the fleet inherits and cannot refuse.
 dependencies = [
-    "fastapi>=0.141,<0.142",
+    "fastapi>=0.141,<0.143",
     "pydantic>=2.13,<3",
     "pydantic-settings>=2.7,<3",
     # kit.clients is the fleet's outbound transport, and every service calls
